@@ -1,0 +1,149 @@
+# tf-infrastructure-app/.pipelines/deploy-pipeline.yml
+trigger:
+  branches:
+    include:
+      - main
+pr: none
+
+# =========================================================================
+# RUNTIME PARAMETERS
+# =========================================================================
+parameters:
+  - name: repoProvider
+    type: string
+    default: 'ado'
+    values:
+      - 'github'
+      - 'ado'
+  
+  - name: githubEndpointName
+    type: string
+    default: 'Inline'
+
+# =========================================================================
+# STATIC RESOURCES (Bypasses compilation auth-walls)
+# =========================================================================
+resources:
+  repositories:
+    - repository: github_templates
+      type: git
+      name: 'nd-todo-react/ent-terraform-pipeline'
+      ref: refs/heads/main
+
+    - repository: ado_templates
+      type: git
+      name: 'nd-todo-react/ent-terraform-pipeline'
+      ref: refs/heads/main
+
+# =========================================================================
+# GLOBAL PIPELINE VARIABLES
+# =========================================================================
+variables:
+  - name: CONTAINER_RUNNER
+    value: 'corpcregistry.azurecr.io/devops/tf-runner:latest'
+  - name: TF_VERSION_FALLBACK
+    value: '1.6.2'
+  - name: executionStrategy
+    value: 'ubuntu-hosted' # Options: 'golden-image' or 'ubuntu-hosted'
+  - name: pipelineServiceConnection
+    value: 'nd-terraform-sc'
+  
+  # Workspace file configurations
+  - name: devtfvarsFile
+    value: 'Terraform.tfvars'
+  - name: qatfvarsFile
+    value: 'Terraform.tfvars'
+  - name: prodtfvarsFile
+    value: 'Terraform.tfvars'
+    
+  # Isolated environment root working spaces
+  - name: devWorkingDirectory
+    value: 'env/dev'
+  - name: qaWorkingDirectory
+    value: 'env/qa'
+  - name: prodWorkingDirectory
+    value: 'env/prod'
+
+# =========================================================================
+# EXECUTION STAGES BLOCK (Declared Exactly Once)
+# =========================================================================
+stages:
+  # ---------------------------------------------------------------------
+  # CONTROLLER ROUTE 1: RUN VIA GITHUB BLUEPRINT CORRELATION
+  # ---------------------------------------------------------------------
+  - ${{ if eq(parameters.repoProvider, 'github') }}:    
+    - template: src/jobs/tf-deploy-job.yml@github_templates
+      parameters:
+        environmentName: 'dev'
+        executionStrategy: $(executionStrategy) 
+        workingDirectory: $(devWorkingDirectory)
+        backendConfigFile: 'backend.conf'
+        tfvarsFile: $(devtfvarsFile)
+        pipelineServiceConnection: $(pipelineServiceConnection)
+        breakOnSecurityFailure: false     
+        runnerContainerImage: $(CONTAINER_RUNNER)
+        terraformVersion: $(TF_VERSION_FALLBACK)
+
+    - template: src/jobs/tf-deploy-job.yml@github_templates
+      parameters:
+        environmentName: 'qa'
+        executionStrategy: $(executionStrategy) 
+        workingDirectory: $(qaWorkingDirectory)
+        backendConfigFile: 'backend.conf'
+        tfvarsFile: $(qatfvarsFile)
+        pipelineServiceConnection: $(pipelineServiceConnection)
+        breakOnSecurityFailure: true      
+        runnerContainerImage: $(CONTAINER_RUNNER)
+        terraformVersion: $(TF_VERSION_FALLBACK)
+
+    - template: src/jobs/tf-deploy-job.yml@github_templates
+      parameters:
+        environmentName: 'prod'
+        executionStrategy: $(executionStrategy)
+        workingDirectory: $(prodWorkingDirectory)
+        backendConfigFile: 'backend.conf'
+        tfvarsFile: $(prodtfvarsFile)
+        pipelineServiceConnection: $(pipelineServiceConnection)
+        breakOnSecurityFailure: true
+        runnerContainerImage: $(CONTAINER_RUNNER)
+        terraformVersion: $(TF_VERSION_FALLBACK)
+
+  # ---------------------------------------------------------------------
+  # CONTROLLER ROUTE 2: RUN VIA ADO NATIVE CODE BLUEPRINT
+  # ---------------------------------------------------------------------
+  - ${{ if eq(parameters.repoProvider, 'ado') }}:
+    - template: src/jobs/tf-deploy-job.yml@ado_templates
+      parameters:
+        environmentName: 'dev'
+        executionStrategy: $(executionStrategy) 
+        workingDirectory: $(devWorkingDirectory)
+        backendConfigFile: 'backend.conf'
+        tfvarsFile: $(devtfvarsFile)
+        pipelineServiceConnection: $(pipelineServiceConnection)
+        breakOnSecurityFailure: false     
+        runnerContainerImage: $(CONTAINER_RUNNER)
+        terraformVersion: $(TF_VERSION_FALLBACK)
+
+    - template: src/jobs/tf-deploy-job.yml@ado_templates
+      parameters:
+        environmentName: 'qa'
+        executionStrategy: $(executionStrategy) 
+        workingDirectory: $(qaWorkingDirectory)
+        backendConfigFile: 'backend.conf'
+        tfvarsFile: $(qatfvarsFile)
+        pipelineServiceConnection: $(pipelineServiceConnection)
+        breakOnSecurityFailure: true      
+        runnerContainerImage: $(CONTAINER_RUNNER)
+        terraformVersion: $(TF_VERSION_FALLBACK)
+
+    - template: src/jobs/tf-deploy-job.yml@ado_templates
+      parameters:
+        environmentName: 'prod'
+        executionStrategy: $(executionStrategy)
+        workingDirectory: $(prodWorkingDirectory)
+        backendConfigFile: 'backend.conf'
+        tfvarsFile: $(prodtfvarsFile)
+        pipelineServiceConnection: $(pipelineServiceConnection)
+        breakOnSecurityFailure: true
+        runnerContainerImage: $(CONTAINER_RUNNER)
+        terraformVersion: $(TF_VERSION_FALLBACK)

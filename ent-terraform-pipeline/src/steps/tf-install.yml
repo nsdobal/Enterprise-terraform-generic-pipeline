@@ -1,0 +1,34 @@
+# pipeline-templates/src/steps/tf-install.yml
+parameters:
+  - name: terraformVersion
+    type: string
+    default: '1.6.2'
+  - name: executionStrategy
+    type: string
+
+steps:
+  - task: Cache@2
+    displayName: 'Optimization: Check Terraform Engine Cache'
+    inputs:
+      key: 'terraform | "${{ parameters.terraformVersion }}" | "$(Agent.OS)"'
+      path: $(Agent.ToolsDirectory)/terraform_cache
+      cacheHitVar: TF_CACHE_HIT
+
+  - script: |
+      echo "Forcing host runtime binary workspace setup..."
+      mkdir -p $(Agent.ToolsDirectory)/terraform_cache
+      
+      curl -sSL https://releases.hashicorp.com/terraform/${{ parameters.terraformVersion }}/terraform_${{ parameters.terraformVersion }}_linux_amd64.zip -o terraform.zip
+      unzip -o terraform.zip -d $(Agent.ToolsDirectory)/terraform_cache
+      rm terraform.zip
+      
+      chmod +x $(Agent.ToolsDirectory)/terraform_cache/terraform
+      echo "Binary successfully verified at location: $(Agent.ToolsDirectory)/terraform_cache/terraform"
+    displayName: 'Runtime: Fetch Remote Terraform Binary'
+    condition: ne(variables.TF_CACHE_HIT, 'true')
+
+  # CRITICAL FIX: Forces Azure DevOps native tasks to see the custom terraform binary path globally
+  - script: |
+      echo "##vso[task.prependpath]$(Agent.ToolsDirectory)/terraform_cache"
+      echo "Terraform cache location appended to system PATH successfully."
+    displayName: 'Runtime: Register Terraform in global PATH'

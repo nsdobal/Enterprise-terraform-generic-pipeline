@@ -1,0 +1,91 @@
+# tf-infrastructure-app/.pipelines/pr-pipeline.yml
+trigger: none
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - src/dev/*   # Triggers if any file inside the dev directory is altered
+      - src/qa/*    # Triggers if any file inside the qa directory is altered
+      - src/prod/*  # Triggers if any file inside the prod directory is altered
+
+
+resources:
+  repositories:
+    - repository: framework_templates
+      type: github
+      name: nsdobal-0526/ent-terraform-pipeline   # Your org/pipeline_name
+      ref: refs/tags/v3.0.0                 
+
+variables:
+  - name: executionStrategy
+    value: 'ubuntu-hosted'  # either golden-image or ubuntu-hosted
+  - name: CONTAINER_RUNNER
+    value: 'corpcregistry.azurecr.io/devops/tf-runner:latest'
+  - name: TF_VERSION_FALLBACK
+    value: '1.6.2'
+  - name: pipelineServiceConnection
+    value: 'nd-terraform-sc'
+  - name: devWorkingDirectory
+    value: 'env/dev'
+  - name: qaWorkingDirectory
+    value: 'env/qa'
+  - name: prodWorkingDirectory
+    value: 'env/prod'
+  - name: devtfvarsFile
+    value: 'environments/dev/Terraform.tfvars'
+  - name: qatfvarsFile
+    value: 'environments/qa/Terraform.tfvars'
+  - name: prodtfvarsFile
+    value: 'environments/prod/Terraform.tfvars'
+  - name: backend.conf
+    value: backend.conf
+
+stages:
+  - stage: PullRequest_Validation
+    displayName: 'PR Security & Spec Validation'
+    jobs:
+      - template: src/jobs/tf-pr-validation-job.yml@framework_templates
+        parameters:
+          jobName: 'validate_dev'
+          displayName: 'Validate Dev Configuration'
+          workingDirectory: $(devWorkingDirectory)
+          backendConfigFile: $(backend.conf)
+          tfvarsFile: $(devtfvarsFile)
+          pipelineServiceConnection: $(pipelineServiceConnection)
+          executionStrategy: $(executionStrategy)
+          runnerContainerImage: $(CONTAINER_RUNNER)
+          terraformVersion: $(TF_VERSION_FALLBACK)
+          condition: and(succeeded(), contains(variables['Build.SourceVersionMessage'], 'src/dev'))
+
+      # =========================================================================
+      # JOB 2: QA VALIDATION (Runs if src/qa/ has changes)
+      # =========================================================================
+      - template: src/jobs/tf-pr-validation-job.yml@framework_templates
+        parameters:
+          jobName: 'validate_qa'
+          displayName: 'Validate QA Configuration'
+          workingDirectory: $(qaWorkingDirectory)
+          backendConfigFile: $(backend.conf)
+          tfvarsFile: $(qatfvarsFile)
+          pipelineServiceConnection: $(pipelineServiceConnection)
+          executionStrategy: $(executionStrategy)
+          terraformVersion: $(TF_VERSION_FALLBACK)
+          condition: and(succeeded(), contains(variables['Build.SourceVersionMessage'], 'src/qa'))
+
+      # =========================================================================
+      # JOB 3: PRODUCTION VALIDATION (Runs if src/prod/ has changes)
+      # =========================================================================
+      - template: src/jobs/tf-pr-validation-job.yml@framework_templates
+        parameters:
+          jobName: 'validate_prod'
+          displayName: 'Validate Production Configuration'
+          workingDirectory: $(prodWorkingDirectory)
+          backendConfigFile: $(backend.conf)
+          tfvarsFile: $(prodtfvarsFile)
+          pipelineServiceConnection: $(pipelineServiceConnection)
+          executionStrategy: $(executionStrategy)
+          terraformVersion: $(TF_VERSION_FALLBACK)
+          condition: and(succeeded(), contains(variables['Build.SourceVersionMessage'], 'src/prod'))
+

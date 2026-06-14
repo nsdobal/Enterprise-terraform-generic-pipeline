@@ -1,0 +1,45 @@
+# pipeline-templates/src/steps/tf-apply.yml
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: pipelineServiceConnection
+    type: string
+  - name: executionStrategy
+    type: string
+    default: 'ubuntu-hosted'
+  - name: tfvarsFile
+    type: string
+    default: ''
+  - name: backendConfigFile
+    type: string
+    default: ''
+
+steps:
+  - task: AzureCLI@2
+    displayName: 'Core: Terraform Apply'
+    inputs:
+      azureSubscription: '${{ parameters.pipelineServiceConnection }}'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      useGlobalConfig: true
+      addSpnToEnvironment: true
+      workingDirectory: '${{ parameters.workingDirectory }}'
+      inlineScript: |
+        echo "=== Applying Gated State Mutation ==="
+        
+        if [ "${{ parameters.executionStrategy }}" = "ubuntu-hosted" ] && [ -f "$(Agent.ToolsDirectory)/terraform_cache/terraform" ]; then
+           TF_EXEC="$(Agent.ToolsDirectory)/terraform_cache/terraform"
+        else
+           TF_EXEC="terraform"
+         fi
+        
+        export ARM_CLIENT_ID="$servicePrincipalId"
+        export ARM_CLIENT_SECRET="$servicePrincipalKey"
+        export ARM_TENANT_ID="$tenantId"
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+        
+        export ARM_USE_AZURECLI=false
+        export ARM_USE_MSI=false
+        unset AZURE_CONFIG_DIR
+        
+        $TF_EXEC apply -input=false tfplan

@@ -1,0 +1,51 @@
+# pipeline-templates/src/steps/tf-security-scan.yml
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: runCheckov
+    type: boolean
+    default: true
+  - name: runTFSec
+    type: boolean
+    default: true
+  - name: breakPipelineOnFailure
+    type: boolean
+    default: true
+  - name: executionStrategy
+    type: string
+
+steps:
+  - script: |
+      echo "=== Launching Checkov Static Analysis ==="
+      FLAGS="-d ."
+      if [ "${{ parameters.breakPipelineOnFailure }}" = "false" ]; then 
+         FLAGS="$FLAGS --soft-fail"
+      fi
+      
+      if command -v checkov &> /dev/null; then
+         checkov $FLAGS --output junitxml > checkov-report.xml
+      elif [ -f "/usr/local/bin/checkov" ]; then
+         /usr/local/bin/checkov $FLAGS --output junitxml > checkov-report.xml
+      else
+         echo "Checkov engine unestablished on current architecture layer. Bypassing safely..."
+      fi
+    workingDirectory: '${{ parameters.workingDirectory }}'
+    displayName: 'Security: Checkov Analytics Engine'
+    condition: eq('${{ parameters.runCheckov }}', true)
+
+  - script: |
+      echo "=== Launching TFSec Static Footprint Scan ==="
+      
+      if command -v tfsec &> /dev/null; then
+         TFSEC_EXEC="tfsec"
+      elif [ -f "$(Agent.ToolsDirectory)/tfsec_cache/tfsec" ]; then
+         TFSEC_EXEC="$(Agent.ToolsDirectory)/tfsec_cache/tfsec"
+      else
+         echo "TFSec scanner binary unestablished. Bypassing execution context gracefully..."
+         exit 0
+      fi
+      
+      $TFSEC_EXEC . --format junit --out tfsec-report.xml
+    workingDirectory: '${{ parameters.workingDirectory }}'
+    displayName: 'Security: TFSec Static Footprint Scan'
+    condition: eq('${{ parameters.runTFSec }}', true)

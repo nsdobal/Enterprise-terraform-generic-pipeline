@@ -1,0 +1,57 @@
+parameters:
+  -name: executionStrategy
+    type: string
+  - name: workingDirectory
+    type: string
+  - name: backendConfigFile
+    type: string
+  - name: tfvarsFile
+    type: string
+  - name: pipelineServiceConnection
+    type: string
+  - name: runnerContainerImage
+    type: string
+  - name: terraformVersion
+    type: string
+  - name: runTFLint
+    type: boolean
+    default: true
+  - name: runCheckov
+    type: boolean
+    default: true
+  - name: runTFSec
+    type: boolean
+    default: true
+
+
+jobs:
+  - job: pr_validation_engine
+    displayName: 'Pull Request Spec Evaluation'
+    pool:
+      vmImage: 'ubuntu-latest'
+    container:
+      image: ${{ parameters.runnerContainerImage }}
+    steps:
+      - template: ../steps/tf-fmt-validate-lint.yml
+        parameters:
+          workingDirectory: ${{ parameters.workingDirectory }}
+          runTFLint: ${{ parameters.runTFLint }}
+
+      - template: ../steps/tf-init.yml
+        parameters:
+          workingDirectory: ${{ parameters.workingDirectory }}
+          backendConfigFile: ${{ parameters.backendConfigFile }}
+          pipelineServiceConnection: ${{ parameters.pipelineServiceConnection }}
+
+      - template: ../steps/tf-security-scan.yml
+        parameters:
+          workingDirectory: ${{ parameters.workingDirectory }}
+          runCheckov: ${{ parameters.runCheckov }}
+          runTFSec: ${{ parameters.runTFSec }}
+          breakPipelineOnFailure: false
+
+      - template: ../steps/tf-plan.yml
+        parameters:
+          workingDirectory: ${{ parameters.workingDirectory }}
+          tfvarsFile: ${{ parameters.tfvarsFile }}
+          pipelineServiceConnection: ${{ parameters.pipelineServiceConnection }}

@@ -1,0 +1,59 @@
+# pipeline-templates/src/steps/tf-scanners-install.yml
+parameters:
+  - name: executionStrategy
+    type: string
+  - name: runTFLint
+    type: boolean
+  - name: runCheckov
+    type: boolean
+  - name: runTFSec
+    type: boolean
+
+steps:
+  # =========================================================================
+  # ENTERPRISE STRATEGY BLOCK: SCANNER HOOKS FOR UBUNTU AGENTS
+  # Bypassed automatically if executing inside a pre-baked Golden Container
+  # =========================================================================
+  
+  # 1. TFLint Assembly Configuration
+  - task: Cache@2
+    displayName: 'Optimization: Evaluate TFLint Cache Engine'
+    inputs:
+      key: 'tflint | "$(Agent.OS)"'
+      path: $(Pipeline.Workspace)/.tflint_bin
+      cacheHitVar: TFLINT_CACHE_HIT
+    condition: and(eq('${{ parameters.executionStrategy }}', 'ubuntu-hosted'), eq('${{ parameters.runTFLint }}', 'true'))
+
+  - script: |
+      mkdir -p $(Pipeline.Workspace)/.tflint_bin
+      curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash -s -- $(Pipeline.Workspace)/.tflint_bin
+    displayName: 'Runtime: Fetch Remote TFLint Engine'
+    condition: and(and(eq('${{ parameters.executionStrategy }}', 'ubuntu-hosted'), eq('${{ parameters.runTFLint }}', 'true')), ne(variables.TFLINT_CACHE_HIT, 'true'))
+
+  - script: echo "##vso[task.prependpath]$(Pipeline.Workspace)/.tflint_bin"
+    displayName: 'Runtime: Mount TFLint to System Path'
+    condition: and(eq('${{ parameters.executionStrategy }}', 'ubuntu-hosted'), eq('${{ parameters.runTFLint }}', 'true'))
+
+  # 2. TFSec Assembly Configuration
+  - task: Cache@2
+    displayName: 'Optimization: Evaluate TFSec Cache Engine'
+    inputs:
+      key: 'tfsec | "$(Agent.OS)"'
+      path: $(Pipeline.Workspace)/.tfsec_bin
+      cacheHitVar: TFSEC_CACHE_HIT
+    condition: and(eq('${{ parameters.executionStrategy }}', 'ubuntu-hosted'), eq('${{ parameters.runTFSec }}', 'true'))
+
+  - script: |
+      mkdir -p $(Pipeline.Workspace)/.tfsec_bin
+      curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash -s -- $(Pipeline.Workspace)/.tfsec_bin
+    displayName: 'Runtime: Fetch Remote TFSec Engine'
+    condition: and(and(eq('${{ parameters.executionStrategy }}', 'ubuntu-hosted'), eq('${{ parameters.runTFSec }}', 'true')), ne(variables.TFSEC_CACHE_HIT, 'true'))
+
+  - script: echo "##vso[task.prependpath]$(Pipeline.Workspace)/.tfsec_bin"
+    displayName: 'Runtime: Mount TFSec to System Path'
+    condition: and(eq('${{ parameters.executionStrategy }}', 'ubuntu-hosted'), eq('${{ parameters.runTFSec }}', 'true'))
+
+  # 3. Checkov Assembly Configuration (Utilizes pip system-level caching natively)
+  - script: pip install --cache-dir $(Pipeline.Workspace)/.pip_cache checkov
+    displayName: 'Runtime: Install Checkov Security Stack'
+    condition: and(eq('${{ parameters.executionStrategy }}', 'ubuntu-hosted'), eq('${{ parameters.runCheckov }}', 'true'))

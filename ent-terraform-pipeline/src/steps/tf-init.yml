@@ -1,0 +1,82 @@
+# pipeline-templates/src/steps/tf-init.yml
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: backendConfigFile
+    type: string
+  - name: pipelineServiceConnection
+    type: string
+  - name: executionStrategy
+    type: string
+    default: 'ubuntu-hosted'
+  - name: tfvarsFile
+    type: string
+    default: ''
+
+steps:
+  - task: AzureCLI@2
+    displayName: 'Core: Terraform Init'
+    inputs:
+      azureSubscription: '${{ parameters.pipelineServiceConnection }}'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      useGlobalConfig: true
+      addSpnToEnvironment: true
+      workingDirectory: '${{ parameters.workingDirectory }}'
+      inlineScript: |
+        echo "=== Resolving Backend Configuration Path ==="
+        GIVEN_CONFIG="${{ parameters.backendConfigFile }}"
+        FINAL_CONFIG_PATH=""
+        
+        if [ -f "$GIVEN_CONFIG" ]; then
+           FINAL_CONFIG_PATH="$GIVEN_CONFIG"
+        elif [ -f "${{ parameters.workingDirectory }}/$GIVEN_CONFIG" ]; then
+           FINAL_CONFIG_PATH="${{ parameters.workingDirectory }}/$GIVEN_CONFIG"
+        elif [ -f "$(System.DefaultWorkingDirectory)/$GIVEN_CONFIG" ]; then
+           FINAL_CONFIG_PATH="$(System.DefaultWorkingDirectory)/$GIVEN_CONFIG"
+        else
+           FOUND_PATH=$(find $(System.DefaultWorkingDirectory) -name "$GIVEN_CONFIG" -print -quit)
+           if [ ! -z "$FOUND_PATH" ]; then
+              FINAL_CONFIG_PATH="$FOUND_PATH"
+           else
+              echo "##vso[task.logissue type=error]CRITICAL FAILURE: Backend config file missing!"
+              exit 1
+         fi
+        fi
+        
+        if [ "${{ parameters.executionStrategy }}" = "ubuntu-hosted" ] && [ -f "$(Agent.ToolsDirectory)/terraform_cache/terraform" ]; then
+           TF_EXEC="$(Agent.ToolsDirectory)/terraform_cache/terraform"
+        else
+           TF_EXEC="terraform"
+        fi
+        
+        # 1. EXTRACT CREDENTIALS FROM SERVICE PRINCIPAL
+        export ARM_CLIENT_ID="$servicePrincipalId"
+        export ARM_CLIENT_SECRET="$servicePrincipalKey"
+        export ARM_TENANT_ID="$tenantId"
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+        
+        # 2. CRITICAL: BLIND TF FROM AZURE CLI DETECTION
+        export ARM_USE_AZURECLI=false
+        export ARM_USE_MSI=false
+        unset AZURE_CONFIG_DIR
+        unset home
+        
+        echo "Using Binary: $TF_EXEC"
+        echo "Forcing direct service principal handshake..."
+        
+        # 3. FORCE BACKEND VARIABLES VIA ENVIRONMENT LOGIC (TF Standard)
+        export TF_VAR_client_id="$ARM_CLIENT_ID"
+        export TF_VAR_client_secret="$ARM_CLIENT_SECRET"
+        export TF_VAR_tenant_id="$ARM_TENANT_ID"
+        export TF_VAR_subscription_id="$ARM_SUBSCRIPTION_ID"
+
+        # Explicit configuration variables inside the runner mapping
+        export ARM_RENAME_BALANCERS=true
+        
+        $TF_EXEC init \
+          -backend-config="$FINAL_CONFIG_PATH" \
+          -backend-config="client_id=$ARM_CLIENT_ID" \
+          -backend-config="client_secret=$ARM_CLIENT_SECRET" \
+          -backend-config="tenant_id=$ARM_TENANT_ID" \
+          -backend-config="subscription_id=$ARM_SUBSCRIPTION_ID"

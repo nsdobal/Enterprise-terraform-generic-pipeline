@@ -1,0 +1,149 @@
+# /pipeline-templates/src/jobs/tf-deploy-job.yml
+parameters:
+  - name: environmentName
+    type: string
+  - name: workingDirectory
+    type: string
+  - name: tfvarsFile
+    type: string
+  - name: backendConfigFile
+    type: string
+  - name: pipelineServiceConnection
+    type: string
+  - name: executionStrategy
+    type: string
+    default: 'ubuntu-hosted' 
+  - name: runnerContainerImage
+    type: string
+    default: ''             
+  - name: terraformVersion
+    type: string
+    default: '1.6.2'        
+  - name: runTFLint
+    type: boolean
+    default: true
+  - name: runCheckov
+    type: boolean
+    default: true
+  - name: runTFSec
+    type: boolean
+    default: true
+  - name: breakOnSecurityFailure
+    type: boolean
+    default: true
+
+stages:
+  # =========================================================================
+  # STAGE 1: PLAN GENERATION & SECURITY VERIFICATION
+  # =========================================================================
+  - stage: Plan_${{ parameters.environmentName }}
+    displayName: 'Plan Stage - ${{ parameters.environmentName }}'
+    jobs:
+      - job: build_spec
+        pool:
+          vmImage: 'ubuntu-latest'
+        
+        ${{ if eq(parameters.executionStrategy, 'golden-image') }}:
+          container: ${{ parameters.runnerContainerImage }}
+        
+        steps:
+          - template: ../steps/tf-install.yml
+            parameters:
+              terraformVersion: ${{ parameters.terraformVersion }}
+              executionStrategy: ${{ parameters.executionStrategy }}
+
+          - task: TerraformTaskV4@4
+            displayName: 'Core: Terraform Init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '${{ parameters.workingDirectory }}'
+              backendServiceArm: '${{ parameters.pipelineServiceConnection }}'
+              backendAzureRmResourceGroupName: 'nd-tfstate'
+              backendAzureRmStorageAccountName: 'ndtfstate202606'
+              backendAzureRmContainerName: 'tfstate'
+              backendAzureRmKey: 'dev.tfstate'
+
+          - template: ../steps/tf-fmt-validate-lint.yml
+            parameters:
+              workingDirectory: ${{ parameters.workingDirectory }}
+              runTFLint: ${{ parameters.runTFLint }}
+              executionStrategy: ${{ parameters.executionStrategy }}
+
+          - template: ../steps/tf-security-scan.yml
+            parameters:
+              workingDirectory: ${{ parameters.workingDirectory }}
+              runCheckov: ${{ parameters.runCheckov }}
+              runTFSec: ${{ parameters.runTFSec }}
+              breakPipelineOnFailure: ${{ parameters.breakOnSecurityFailure }}
+              executionStrategy: ${{ parameters.executionStrategy }}
+
+          - task: TerraformTaskV4@4
+            displayName: 'Core: Terraform Plan'
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: '${{ parameters.workingDirectory }}'
+              environmentServiceNameAzureRM: '${{ parameters.pipelineServiceConnection }}'
+              commandOptions: '-var-file="${{ parameters.tfvarsFile }}" -out=tfplan'
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '${{ parameters.workingDirectory }}/tfplan'
+              artifact: 'tfplan-${{ parameters.environmentName }}'
+
+  # =========================================================================
+  # STAGE 2: ENVIRONMENT GATED STATE MUTATION (FIXED WORKSPACE ENVIRONMENT)
+  # =========================================================================
+  - stage: Apply_${{ parameters.environmentName }}
+    displayName: 'Apply Stage - ${{ parameters.environmentName }}'
+    dependsOn: Plan_${{ parameters.environmentName }}
+    condition: succeeded()
+    jobs:
+      - deployment: deploy_mutation
+        environment: '${{ parameters.environmentName }}'
+        pool:
+          vmImage: 'ubuntu-latest'
+        
+        ${{ if eq(parameters.executionStrategy, 'golden-image') }}:
+          container: ${{ parameters.runnerContainerImage }}
+            
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                # CRITICAL FIXED STEP: Force ADO Deployment job to checkout the codebase
+                - checkout: self
+                  displayName: 'Workspace: Sync Source Infrastructure Code'
+
+                - template: ../steps/tf-install.yml
+                  parameters:
+                    terraformVersion: ${{ parameters.terraformVersion }}
+                    executionStrategy: ${{ parameters.executionStrategy }}
+
+                # Download plan directly into the checked-out workspace directory
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'tfplan-${{ parameters.environmentName }}'
+                    path: ${{ parameters.workingDirectory }}
+
+                - task: TerraformTaskV4@4
+                  displayName: 'Core: Terraform Init (Apply)'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: '${{ parameters.workingDirectory }}'
+                    backendServiceArm: '${{ parameters.pipelineServiceConnection }}'
+                    backendAzureRmResourceGroupName: 'nd-tfstate'
+                    backendAzureRmStorageAccountName: 'ndtfstate202606'
+                    backendAzureRmContainerName: 'tfstate'
+                    backendAzureRmKey: 'dev.tfstate'
+
+                - task: TerraformTaskV4@4
+                  displayName: 'Core: Terraform Apply'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    workingDirectory: '${{ parameters.workingDirectory }}'
+                    environmentServiceNameAzureRM: '${{ parameters.pipelineServiceConnection }}'
+                    commandOptions: 'tfplan'

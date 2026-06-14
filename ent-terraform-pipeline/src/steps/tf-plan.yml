@@ -1,0 +1,44 @@
+# pipeline-templates/src/steps/tf-plan.yml
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: tfvarsFile
+    type: string
+  - name: pipelineServiceConnection
+    type: string
+  - name: executionStrategy
+    type: string
+    default: 'ubuntu-hosted'
+  - name: backendConfigFile
+    type: string
+    default: ''
+
+steps:
+  - task: AzureCLI@2
+    displayName: 'Core: Terraform Plan'
+    inputs:
+      azureSubscription: '${{ parameters.pipelineServiceConnection }}'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      useGlobalConfig: true
+      addSpnToEnvironment: true
+      workingDirectory: '${{ parameters.workingDirectory }}'
+      inlineScript: |
+        echo "=== Generating Plan Spec ==="
+        
+        if [ "${{ parameters.executionStrategy }}" = "ubuntu-hosted" ] && [ -f "$(Agent.ToolsDirectory)/terraform_cache/terraform" ]; then
+           TF_EXEC="$(Agent.ToolsDirectory)/terraform_cache/terraform"
+        else
+           TF_EXEC="terraform"
+        fi
+        
+        export ARM_CLIENT_ID="$servicePrincipalId"
+        export ARM_CLIENT_SECRET="$servicePrincipalKey"
+        export ARM_TENANT_ID="$tenantId"
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+        
+        export ARM_USE_AZURECLI=false
+        export ARM_USE_MSI=false
+        unset AZURE_CONFIG_DIR
+        
+        $TF_EXEC plan -var-file="${{ parameters.tfvarsFile }}" -out=tfplan
